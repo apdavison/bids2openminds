@@ -6,6 +6,7 @@ import gzip
 from warnings import warn
 
 import pandas as pd
+import nibabel as nib
 
 from . import openminds_version as om
 
@@ -202,3 +203,106 @@ def detect_nifti_version(file_name, extension, file_size):
                 return om.core.ContentType.by_name("application/vnd.nifti.2")
 
     return om.core.ContentType.by_name("application/vnd.nifti.1")
+
+
+def _parse_bids_filename(filename):
+    """Split a BIDS filename into its ``{key: value}`` entities and suffix.
+
+    e.g. ``sub-01_ses-1_task-rest_bold.nii.gz`` ->
+    ``({"sub": "01", "ses": "1", "task": "rest"}, "bold")``.
+    """
+    stem = os.path.basename(filename).split(".")[0]
+    entities = {}
+    suffix = None
+    for part in stem.split("_"):
+        if "-" in part:
+            key, _, value = part.partition("-")
+            entities[key] = value
+        elif part:
+            suffix = part
+    return entities, suffix
+
+
+def read_bids_metadata(file_path, dataset_root):
+    """Resolve the inherited JSON sidecar metadata for a BIDS data file.
+
+    Implements the BIDS inheritance principle directly (the ancpBIDS
+    ``get_metadata`` in the pinned version does not resolve inherited sidecars):
+    JSON sidecars from the dataset root down to the data file's own directory are
+    merged when their suffix matches the data file's suffix and their entities are
+    a subset of the data file's entities, with sidecars that are closer to the data
+    file (deeper directory) and more specific (more entities) taking precedence.
+
+    Parameters:
+    - file_path (str): absolute path to the BIDS data file.
+    - dataset_root (str): absolute path to the dataset root directory.
+
+    Returns:
+    - dict: the merged metadata (empty if no applicable sidecars are found).
+    """
+    file_path = os.path.abspath(file_path)
+    dataset_root = os.path.abspath(dataset_root)
+    target_entities, target_suffix = _parse_bids_filename(file_path)
+
+    # Directories from the data file's own directory up to (and including) the root.
+    directories = []
+    current = os.path.dirname(file_path)
+    while True:
+        directories.append(current)
+        if os.path.abspath(current) == dataset_root:
+            break
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    applicable = []  # (depth, num_entities, metadata_dict)
+    for directory in directories:
+        try:
+            depth = 0 if directory == dataset_root else len(
+                os.path.relpath(directory, dataset_root).split(os.sep))
+        except ValueError:
+            continue
+        for entry in sorted(os.listdir(directory)):
+            if not entry.endswith(".json"):
+                continue
+            json_entities, json_suffix = _parse_bids_filename(entry)
+            if json_suffix != target_suffix:
+                continue
+            if any(target_entities.get(k) != v for k, v in json_entities.items()):
+                continue
+            content = read_json(os.path.join(directory, entry))
+            if content:
+                applicable.append((depth, len(json_entities), content))
+
+    merged = {}
+    for _, _, content in sorted(applicable, key=lambda item: (item[0], item[1])):
+        merged.update(content)
+    return merged
+
+
+def read_nifti_geometry(file_path):
+    """Read the spatial geometry of a NIfTI file from its header.
+
+    Parameters:
+    - file_path (str): Path to a ``.nii`` or ``.nii.gz`` file.
+
+    Returns:
+    - tuple or None: ``(shape, zooms, axcodes)`` where ``shape`` is the data
+      shape (e.g. ``(64, 64, 30)`` for 3-D or ``(64, 64, 30, 120)`` for 4-D),
+      ``zooms`` is the per-axis voxel size tuple, and ``axcodes`` is the
+      anatomical orientation tuple derived from the affine (e.g.
+      ``('R', 'A', 'S')``). Returns ``None`` if the file cannot be read — most
+      notably the empty placeholder NIfTI files shipped in ``bids-examples``,
+      which raise an error in ``nibabel``.
+    """
+    try:
+        img = nib.load(file_path)
+        shape = tuple(int(d) for d in img.shape)
+        zooms = tuple(float(z) for z in img.header.get_zooms())
+        axcodes = nib.aff2axcodes(img.affine)
+    except Exception:
+        return None
+    if not shape:
+        return None
+    return shape, zooms, axcodes

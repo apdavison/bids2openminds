@@ -27,6 +27,9 @@ version = None
 core = None
 #: The ``openminds.<version>.controlled_terms`` submodule for the configured version.
 controlled_terms = None
+#: The ``openminds.<version>.neuroimaging`` submodule, or None if the configured
+#: version has no neuroimaging module (it was introduced in v5).
+neuroimaging = None
 
 
 def configure(requested_version=DEFAULT_VERSION):
@@ -42,7 +45,7 @@ def configure(requested_version=DEFAULT_VERSION):
     Raises:
     - ValueError: if ``requested_version`` is not supported.
     """
-    global version, core, controlled_terms
+    global version, core, controlled_terms, neuroimaging
     if requested_version not in SUPPORTED_VERSIONS:
         raise ValueError(
             f"Unsupported openMINDS version {requested_version!r}; "
@@ -51,6 +54,12 @@ def configure(requested_version=DEFAULT_VERSION):
     core = importlib.import_module(f"openminds.{requested_version}.core")
     controlled_terms = importlib.import_module(
         f"openminds.{requested_version}.controlled_terms")
+    try:
+        neuroimaging = importlib.import_module(
+            f"openminds.{requested_version}.neuroimaging")
+    except ModuleNotFoundError:
+        # The neuroimaging module was introduced in v5; older versions lack it.
+        neuroimaging = None
     version = requested_version
 
 

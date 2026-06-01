@@ -9,6 +9,7 @@ import click
 from . import main
 from . import utility
 from . import report
+from . import neuroimaging
 from . import openminds_version as om
 
 _ENTITY_RENAMES = {"sub": "subject", "ses": "session"}
@@ -92,11 +93,19 @@ def convert(input_path,  save_output=False, output_path=None, multiple_files=Fal
     behavioral_protocols, behavioral_protocols_dict = main.create_behavioral_protocol(
         bids_layout, collection)
 
-    [files_list, file_repository] = main.create_file(
+    [files_list, file_repository, file_by_path] = main.create_file(
         layout_df, input_path, collection)
 
     dataset_version = main.create_dataset_version(
         bids_layout, dataset_description, layout_df, subjects_list, file_repository, behavioral_protocols, collection)
+
+    # openMINDS v5 added the neuroimaging module; create per-acquisition MRI
+    # metadata (scanner/coil usages, acquisition activities, grid volumes) and
+    # link it to the subjects, files and dataset version created above.
+    if openminds_version == "v5":
+        neuroimaging.create_mri_acquisitions(
+            layout_df, bids_layout, file_by_path, subject_state_dict,
+            behavioral_protocols_dict, dataset_version, collection)
 
     dataset = main.create_dataset(
         dataset_description, dataset_version, collection)

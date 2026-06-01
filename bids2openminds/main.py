@@ -467,7 +467,10 @@ def create_subjects(subject_id, layout_df, layout, collection):
                     collection.add(state)
                     state_cache_dict[f"{session}"] = state
                     state_cache.append(state)
-            subject_state_dict[f"{subject}"] = state_cache_dict
+        # Populate for both the session and no-session branches so that
+        # downstream linking (e.g. MRI acquisitions) can always resolve a
+        # subject's states by session key ("" when the dataset has no sessions).
+        subject_state_dict[f"{subject}"] = state_cache_dict
         subject_cache = om.core.Subject(
             biological_sex=sex_openminds(data_subject),
             lookup_label=f"{subject_name}",
@@ -549,6 +552,7 @@ def create_file(layout_df, BIDS_path, collection):
         BIDS_path_absolute, BIDS_path_absolute, collection, is_file_repository=True)
 
     files_list = []
+    file_by_path = {}
     for index, file in layout_df.iterrows():
         file_format = None
         content_description = None
@@ -605,5 +609,6 @@ def create_file(layout_df, BIDS_path, collection):
         )
         collection.add(file)
         files_list.append(file)
+        file_by_path[path] = file
 
-    return files_list, file_repository
+    return files_list, file_repository, file_by_path
